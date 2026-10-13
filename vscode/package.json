@@ -1,0 +1,304 @@
+{
+  "name": "devtrace",
+  "displayName": "DevTrace",
+  "description": "Trace code you actually write — AI proposes, you type it. Code-aware typing practice inside the editor.",
+  "version": "0.0.5",
+  "private": true,
+  "publisher": "devtrace",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other",
+    "Education"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished",
+    "onView:devtrace.pending"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "devtrace",
+          "title": "DevTrace",
+          "icon": "resources/devtrace.svg"
+        }
+      ]
+    },
+    "views": {
+      "devtrace": [
+        {
+          "id": "devtrace.pending",
+          "name": "Pending changes",
+          "icon": "resources/devtrace.svg",
+          "contextualTitle": "DevTrace"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "devtrace.pending",
+        "when": "!devtrace.stagingEnabled",
+        "contents": "DevTrace is off. Turn it on and every OpenCode edit will be staged here for you to type by hand.\n[Turn on DevTrace](command:devtrace.enableStaging)"
+      },
+      {
+        "view": "devtrace.pending",
+        "when": "devtrace.stagingEnabled",
+        "contents": "No pending changes. When OpenCode proposes an edit, it waits here for you to type it by hand.\n[Trace a selection](command:devtrace.traceSelection)"
+      }
+    ],
+    "commands": [
+      {
+        "command": "devtrace.traceSelection",
+        "title": "DevTrace: Trace Selection"
+      },
+      {
+        "command": "devtrace.traceFile",
+        "title": "DevTrace: Trace File Range"
+      },
+      {
+        "command": "devtrace.endSession",
+        "title": "DevTrace: End Trace Session"
+      },
+      {
+        "command": "devtrace.showResults",
+        "title": "DevTrace: Show Last Results"
+      },
+      {
+        "command": "devtrace.installOpencodePlugin",
+        "title": "DevTrace: Install OpenCode Plugin"
+      },
+      {
+        "command": "devtrace.pending.trace",
+        "title": "Trace Change",
+        "category": "DevTrace",
+        "icon": "$(keyboard)"
+      },
+      {
+        "command": "devtrace.pending.discard",
+        "title": "Discard Change",
+        "category": "DevTrace",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "devtrace.pending.reveal",
+        "title": "Reveal File",
+        "category": "DevTrace",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "devtrace.pending.traceAll",
+        "title": "Trace All Pending",
+        "category": "DevTrace",
+        "icon": "$(play)"
+      },
+      {
+        "command": "devtrace.pending.clear",
+        "title": "Discard All Pending",
+        "category": "DevTrace",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "devtrace.pending.refresh",
+        "title": "Refresh Pending Changes",
+        "category": "DevTrace",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "devtrace.enableStaging",
+        "title": "Turn On DevTrace",
+        "category": "DevTrace",
+        "icon": "$(circle-outline)"
+      },
+      {
+        "command": "devtrace.disableStaging",
+        "title": "Turn Off DevTrace",
+        "category": "DevTrace",
+        "icon": "$(circle-filled)"
+      },
+      {
+        "command": "devtrace.enter",
+        "title": "DevTrace: Newline"
+      },
+      {
+        "command": "devtrace.tab",
+        "title": "DevTrace: Tab"
+      },
+      {
+        "command": "devtrace.backspace",
+        "title": "DevTrace: Backspace"
+      },
+      {
+        "command": "devtrace.skipLine",
+        "title": "DevTrace: Skip Line"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "devtrace.endSession",
+        "key": "escape",
+        "when": "devtrace.tracing"
+      },
+      {
+        "command": "devtrace.enter",
+        "key": "enter",
+        "when": "devtrace.tracing"
+      },
+      {
+        "command": "devtrace.tab",
+        "key": "tab",
+        "when": "devtrace.tracing"
+      },
+      {
+        "command": "devtrace.backspace",
+        "key": "backspace",
+        "when": "devtrace.tracing"
+      },
+      {
+        "command": "devtrace.skipLine",
+        "key": "ctrl+enter",
+        "mac": "cmd+enter",
+        "when": "devtrace.tracing"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "devtrace.enableStaging",
+          "when": "view == devtrace.pending && !devtrace.stagingEnabled",
+          "group": "navigation@0"
+        },
+        {
+          "command": "devtrace.disableStaging",
+          "when": "view == devtrace.pending && devtrace.stagingEnabled",
+          "group": "navigation@0"
+        },
+        {
+          "command": "devtrace.pending.traceAll",
+          "when": "view == devtrace.pending",
+          "group": "navigation@1"
+        },
+        {
+          "command": "devtrace.pending.refresh",
+          "when": "view == devtrace.pending",
+          "group": "navigation@2"
+        },
+        {
+          "command": "devtrace.pending.clear",
+          "when": "view == devtrace.pending",
+          "group": "navigation@3"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "devtrace.pending.trace",
+          "when": "view == devtrace.pending && viewItem == devtrace.pending",
+          "group": "inline@1"
+        },
+        {
+          "command": "devtrace.pending.discard",
+          "when": "view == devtrace.pending && viewItem == devtrace.pending",
+          "group": "inline@2"
+        },
+        {
+          "command": "devtrace.pending.reveal",
+          "when": "view == devtrace.pending && viewItem == devtrace.pending",
+          "group": "1_open"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "devtrace.pending.trace",
+          "when": "false"
+        },
+        {
+          "command": "devtrace.pending.discard",
+          "when": "false"
+        },
+        {
+          "command": "devtrace.pending.reveal",
+          "when": "false"
+        },
+        {
+          "command": "devtrace.enter",
+          "when": "false"
+        },
+        {
+          "command": "devtrace.tab",
+          "when": "false"
+        },
+        {
+          "command": "devtrace.backspace",
+          "when": "false"
+        },
+        {
+          "command": "devtrace.skipLine",
+          "when": "false"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "DevTrace",
+      "properties": {
+        "devtrace.advanceOnError": {
+          "type": "boolean",
+          "default": true,
+          "description": "Advance the cursor even on a wrong keystroke (DevTrace's non-blocking model). When false, the wrong keystroke is rejected and the ghost stays put."
+        },
+        "devtrace.showGhost": {
+          "type": "boolean",
+          "default": true,
+          "description": "Render the remaining target text as dimmed ghost text in the editor."
+        },
+        "devtrace.playSound": {
+          "type": "boolean",
+          "default": false,
+          "description": "Play subtle audio feedback on keystrokes (in addition to any editor keystroke sound)."
+        },
+        "devtrace.queueDir": {
+          "type": "string",
+          "default": ".devtrace",
+          "description": "Workspace-relative directory the OpenCode plugin writes staged AI changes to."
+        },
+        "devtrace.debug": {
+          "type": "boolean",
+          "default": false,
+          "description": "Log trace input handling to the 'DevTrace' output channel. Useful if typing is not being scored."
+        },
+        "devtrace.autoTrace": {
+          "type": "boolean",
+          "default": false,
+          "description": "Open the trace panel for each staged AI change automatically. When off, changes wait in the DevTrace sidebar until you start them."
+        },
+        "devtrace.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether DevTrace staging is on. The DevTrace sidebar toggle also controls this. Staging is active when the queue directory (.devtrace) exists."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.js && node scripts/copy-plugin.js",
+    "watch": "node esbuild.js --watch",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "package": "npm run build && npx --yes @vscode/vsce package --no-dependencies --allow-missing-repository"
+  },
+  "dependencies": {
+    "@devtrace/core": "*",
+    "@devtrace/ui": "*",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/vscode": "^1.90.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.0"
+  }
+}

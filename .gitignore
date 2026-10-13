@@ -1,5 +1,12 @@
 node_modules
 dist
 .devtrace-session
+.devtrace/
 *.log
 .DS_Store
+vscode/dist
+vscode/out
+vscode/assets/opencode-plugin.ts
+opencode-plugin/dist
+opencode-plugin/*.tgz
+*.vsix

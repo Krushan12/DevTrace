@@ -1,0 +1,16 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "types": ["node", "vscode"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "baseUrl": ".",
+    "paths": {
+      "@devtrace/core": ["../core/src/index.ts"],
+      "@devtrace/ui": ["../ui/src/index.ts"]
+    }
+  },
+  "include": ["src"]
+}

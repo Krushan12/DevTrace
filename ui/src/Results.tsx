@@ -1,11 +1,18 @@
-import type { Metrics } from '../lib/trace.js'
-import { topOffenders, type Trace } from '../lib/trace.js'
-import { showChar } from '../lib/format.js'
+import type { ReactNode } from 'react'
+import type { Metrics, Offender } from '@devtrace/core'
+import { showChar } from '@devtrace/core'
 
 interface Props {
-  trace: Trace
+  /** The most-missed keys for the session, already tallied by the host. */
+  offenders: Offender[]
   metrics: Metrics
   label: string
+  /** Heading override for the panel flow. Defaults to "Session complete". */
+  title?: string
+  /** Message shown above the stats, e.g. a warning about uncorrected errors. */
+  note?: ReactNode
+  /** Replaces the default action row (used by the panel's save/discard flow). */
+  actions?: ReactNode
   onRetrace: () => void
   onAnother: () => void
   onFiles: () => void
@@ -13,15 +20,15 @@ interface Props {
 
 const pct = (n: number) => `${(n * 100).toFixed(1)}%`
 
-export default function Results({ trace, metrics: m, label, onRetrace, onAnother, onFiles }: Props) {
-  const offenders = topOffenders(trace)
-
+export default function Results({ offenders, metrics: m, label, title, note, actions, onRetrace, onAnother, onFiles }: Props) {
   return (
     <div className="panel results">
       <div className="rhead">
-        <h2>Session complete</h2>
+        <h2>{title ?? 'Session complete'}</h2>
         <div className="rlabel">{label}</div>
       </div>
+
+      {note}
 
       <div className="statgrid">
         <div className="stat big">
@@ -52,6 +59,12 @@ export default function Results({ trace, metrics: m, label, onRetrace, onAnother
           <div className="v">{m.backspaces}</div>
           <div className="k">backspaces</div>
         </div>
+        {m.skipped > 0 && (
+          <div className="stat">
+            <div className="v">{m.skipped}</div>
+            <div className="k">skipped</div>
+          </div>
+        )}
         <div className="stat">
           <div className="v">{m.avgIntervalMs.toFixed(0)}ms</div>
           <div className="k">avg key</div>
@@ -93,15 +106,17 @@ export default function Results({ trace, metrics: m, label, onRetrace, onAnother
         </div>
       )}
 
-      <div className="ractions">
-        <button className="go" onClick={onRetrace}>
-          Trace it again
-        </button>
-        <button onClick={onAnother}>Another range</button>
-        <button className="ghost" onClick={onFiles}>
-          All files
-        </button>
-      </div>
+      {actions ?? (
+        <div className="ractions">
+          <button className="go" onClick={onRetrace}>
+            Trace it again
+          </button>
+          <button onClick={onAnother}>Another range</button>
+          <button className="ghost" onClick={onFiles}>
+            All files
+          </button>
+        </div>
+      )}
     </div>
   )
 }

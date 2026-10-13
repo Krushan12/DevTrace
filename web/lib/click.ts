@@ -45,7 +45,7 @@ export function isMuted(): boolean {
   return muted
 }
 
-export type ClickKind = 'ok' | 'err' | 'enter' | 'tab'
+export type ClickKind = 'ok' | 'err' | 'enter' | 'tab' | 'skip'
 
 interface Timbre {
   freq: number
@@ -62,6 +62,8 @@ const TIMBRES: Record<ClickKind, Timbre> = {
   err: { freq: 420, q: 0.7, dur: 0.075, gain: 0.09, tone: 0.55 },
   enter: { freq: 1500, q: 1.0, dur: 0.045, gain: 0.06, tone: 0.1 },
   tab: { freq: 1900, q: 1.1, dur: 0.038, gain: 0.055, tone: 0.14 },
+  // A soft sweep-down: distinct from Enter and Tab, signalling "past it".
+  skip: { freq: 1100, q: 1.3, dur: 0.05, gain: 0.045, tone: 0.2 },
 }
 
 export function playClick(kind: ClickKind): void {

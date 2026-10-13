@@ -10,7 +10,15 @@
 export const PENDING = 0
 export const CORRECT = 1
 export const WRONG = 2
-export type CharState = 0 | 1 | 2
+/** Accepted untouched via the skip shortcut: kept in the artifact, not typed. */
+export const SKIPPED = 3
+/**
+ * Read-only file text a multi-region trace renders around its editable hunks.
+ * Never written into a real `Trace`'s `states`; only the full-file view layer
+ * uses it, to mark a character that is context rather than a target.
+ */
+export const CONTEXT = 4
+export type CharState = 0 | 1 | 2 | 3 | 4
 
 export interface Keystroke {
   /** Absolute offset into doc.text that this keystroke targeted. */
@@ -19,7 +27,7 @@ export interface Keystroke {
   exp: string
   ok: boolean
   t: number
-  kind: 'type' | 'back' | 'tab' | 'newline'
+  kind: 'type' | 'back' | 'tab' | 'newline' | 'skip'
 }
 
 export interface Doc {
@@ -117,6 +125,12 @@ function finalizeLine(t: Trace, li: number): void {
   if (t.finalized[li] === 1) return
   t.finalized[li] = 1
   const start = t.doc.lineStarts[li]!
+  const len = (t.doc.lines[li] as string).length
+  // A line the developer chose to skip was never theirs to type, so it neither
+  // passes nor fails the indent check.
+  for (let i = start; i < start + len; i++) {
+    if (t.states[i] === SKIPPED) return
+  }
   const n = t.doc.indentLen[li]!
   if (n === 0 || start === undefined) return
   let bad = 0
@@ -167,6 +181,51 @@ export function backspace(t: Trace, now: number): boolean {
   return true
 }
 
+/**
+ * Jump past the line the cursor is on, accepting that line's source text
+ * untouched. Skipped characters keep the proposed glyph, so saving writes them
+ * verbatim (a skip means "not now", not "delete this"), but they are excluded
+ * from typing metrics — you didn't type them. The newline is consumed too, so
+ * the cursor lands at the start of the next line.
+ */
+export function skipLine(t: Trace, now: number): boolean {
+  if (isComplete(t)) return false
+  const li = t.doc.lineOf[t.cursor] as number
+  const start = t.doc.lineStarts[li] as number
+  const lineLen = (t.doc.lines[li] as string).length
+  let end = start + lineLen
+  if (t.doc.text[end] === '\n') end++
+  if (end <= t.cursor) return false
+
+  for (let i = t.cursor; i < end; i++) {
+    t.states[i] = SKIPPED
+    t.wrongAt.delete(i)
+    t.keystrokes.push({ i, got: '', exp: t.doc.text[i] as string, ok: true, t: now, kind: 'skip' })
+  }
+  t.cursor = end
+  if (t.firstT === null) t.firstT = now
+  t.lastT = now
+  finalizeLine(t, li)
+  return true
+}
+
+/**
+ * Reconstruct exactly what the user typed at the current cursor: a prefix of
+ * the target with the keys actually pressed substituted at every wrong offset.
+ * A PENDING offset (never reached, or backspaced away) contributes nothing, so
+ * an unfinished session yields only the prefix the user actually wrote. This is
+ * the artifact to write to disk when a trace is saved as-typed.
+ */
+export function typedText(t: Trace): string {
+  const out: string[] = []
+  for (let i = 0; i < t.cursor; i++) {
+    const st = t.states[i] as CharState
+    if (st === CORRECT || st === SKIPPED) out.push(t.doc.text[i] as string)
+    else if (st === WRONG) out.push(t.wrongAt.get(i) ?? (t.doc.text[i] as string))
+  }
+  return out.join('')
+}
+
 export function finalizeAll(t: Trace): void {
   for (let li = 0; li < t.doc.lines.length; li++) {
     const start = t.doc.lineStarts[li] as number
@@ -184,6 +243,8 @@ export interface Metrics {
   correct: number
   errors: number
   backspaces: number
+  /** Lines accepted untouched with the skip shortcut. Not typed, not scored. */
+  skipped: number
   /** Seconds between first and last keystroke. */
   seconds: number
   /** Correct chars per 5, per minute. */
@@ -201,13 +262,25 @@ export interface Metrics {
   avgIntervalMs: number
 }
 
-export function metrics(t: Trace): Metrics {
-  const typed = t.keystrokes.filter((k) => k.kind !== 'back')
+/** The raw material every metric is derived from, so one trace and a bundle of
+ * traces can be scored by the exact same formulas. */
+interface MetricsInput {
+  keystrokes: Keystroke[]
+  skipped: number
+  indentHits: number
+  indentMisses: number
+  firstT: number | null
+  lastT: number | null
+}
+
+function computeMetrics(input: MetricsInput): Metrics {
+  const { keystrokes, skipped, indentHits, indentMisses, firstT, lastT } = input
+  const typed = keystrokes.filter((k) => k.kind !== 'back' && k.kind !== 'skip')
   const correct = typed.filter((k) => k.ok).length
   const errors = typed.length - correct
-  const backspaces = t.keystrokes.length - typed.length
+  const backspaces = keystrokes.filter((k) => k.kind === 'back').length
 
-  const seconds = t.firstT !== null && t.lastT !== null ? Math.max(0, (t.lastT - t.firstT) / 1000) : 0
+  const seconds = firstT !== null && lastT !== null ? Math.max(0, (lastT - firstT) / 1000) : 0
   const minutes = seconds / 60
   const netWpm = minutes > 0 ? correct / 5 / minutes : 0
   const rawWpm = minutes > 0 ? typed.length / 5 / minutes : 0
@@ -230,8 +303,8 @@ export function metrics(t: Trace): Metrics {
     }
   }
 
-  const indentLines = t.indentHits + t.indentMisses
-  const indentAccuracy = indentLines > 0 ? t.indentHits / indentLines : 1
+  const indentLines = indentHits + indentMisses
+  const indentAccuracy = indentLines > 0 ? indentHits / indentLines : 1
 
   const avgIntervalMs = typed.length > 1 && seconds > 0
     ? (seconds * 1000) / (typed.length - 1)
@@ -242,17 +315,55 @@ export function metrics(t: Trace): Metrics {
     correct,
     errors,
     backspaces,
+    skipped,
     seconds,
     netWpm,
     rawWpm,
     accuracy,
     consistency,
     indentLines,
-    indentHits: t.indentHits,
-    indentMisses: t.indentMisses,
+    indentHits,
+    indentMisses,
     indentAccuracy,
     avgIntervalMs,
   }
+}
+
+export function metrics(t: Trace): Metrics {
+  let skipped = 0
+  for (let i = 0; i < t.states.length; i++) if (t.states[i] === SKIPPED) skipped++
+  return computeMetrics({
+    keystrokes: t.keystrokes,
+    skipped,
+    indentHits: t.indentHits,
+    indentMisses: t.indentMisses,
+    firstT: t.firstT,
+    lastT: t.lastT,
+  })
+}
+
+/**
+ * Score several traces — the changed hunks of one file — as a single session.
+ * Keystrokes are merged in timestamp order and every formula runs over the
+ * combined log, so the aggregate is identical to having traced it in one go.
+ */
+export function aggregateMetrics(traces: Trace[]): Metrics {
+  const keystrokes: Keystroke[] = []
+  let skipped = 0
+  let indentHits = 0
+  let indentMisses = 0
+  let firstT: number | null = null
+  let lastT: number | null = null
+  for (const t of traces) {
+    for (const k of t.keystrokes) keystrokes.push(k)
+    for (let i = 0; i < t.states.length; i++) if (t.states[i] === SKIPPED) skipped++
+    indentHits += t.indentHits
+    indentMisses += t.indentMisses
+    if (t.firstT !== null && (firstT === null || t.firstT < firstT)) firstT = t.firstT
+    if (t.lastT !== null && (lastT === null || t.lastT > lastT)) lastT = t.lastT
+  }
+  keystrokes.sort((a, b) => a.t - b.t)
+  return computeMetrics({ keystrokes, skipped, indentHits, indentMisses, firstT, lastT })
 }
 
 /**
@@ -265,9 +376,15 @@ export function metrics(t: Trace): Metrics {
  * raw 0x00 byte in the source makes git treat the whole file as binary and
  * refuse to diff it.
  */
-export function topOffenders(t: Trace, limit = 12): Array<{ got: string; expected: string; count: number }> {
+export interface Offender {
+  got: string
+  expected: string
+  count: number
+}
+
+export function topOffendersFrom(keystrokes: Keystroke[], limit = 12): Offender[] {
   const m = new Map<string, number>()
-  for (const k of t.keystrokes) {
+  for (const k of keystrokes) {
     if (k.kind === 'back' || k.ok) continue
     const key = `${k.got}\0${k.exp}`
     m.set(key, (m.get(key) ?? 0) + 1)
@@ -279,4 +396,15 @@ export function topOffenders(t: Trace, limit = 12): Array<{ got: string; expecte
     })
     .sort((a, b) => b.count - a.count)
     .slice(0, limit)
+}
+
+export function topOffenders(t: Trace, limit = 12): Offender[] {
+  return topOffendersFrom(t.keystrokes, limit)
+}
+
+/** Most-missed keys across several traces of the same file. */
+export function topOffendersAcross(traces: Trace[], limit = 12): Offender[] {
+  const keystrokes: Keystroke[] = []
+  for (const t of traces) for (const k of t.keystrokes) keystrokes.push(k)
+  return topOffendersFrom(keystrokes, limit)
 }

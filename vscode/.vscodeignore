@@ -1,0 +1,10 @@
+# Build inputs and sources are not shipped; the bundled dist/ and the
+# copied assets/ plugin are.
+src/**
+scripts/**
+node_modules/**
+.vscode/**
+esbuild.js
+tsconfig.json
+dist/**/*.map
+**/*.map

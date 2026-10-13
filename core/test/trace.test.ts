@@ -1,4 +1,5 @@
 import {
+  aggregateMetrics,
   backspace,
   buildDoc,
   CORRECT,
@@ -7,12 +8,16 @@ import {
   isComplete,
   metrics,
   press,
+  SKIPPED,
+  skipLine,
   tabFill,
   topOffenders,
+  topOffendersAcross,
+  typedText,
   WRONG,
-} from './trace.js'
-import { buildRuns } from './tokenize.js'
-import { showChar } from './format.js'
+} from '../src/trace.js'
+import { buildRuns } from '../src/tokenize.js'
+import { showChar } from '../src/format.js'
 
 let failures = 0
 function ok(label: string, cond: boolean, detail = '') {
@@ -259,6 +264,119 @@ console.log('\n14. a space keystroke round-trips through topOffenders')
   ok('space miss is recorded', spaceMiss !== undefined)
   ok('its "got" is not empty', spaceMiss?.got === 'x', `got ${JSON.stringify(spaceMiss?.got)}`)
   ok('expected "a" miss intact', off.some((o) => o.expected === 'a' && o.got === 'q'))
+}
+
+console.log('\n15. typedText reconstructs exactly what was typed')
+{
+  const src = 'def f():\n    return 1'
+  const t = createTrace(src)
+  typeAll(t, src)
+  ok('a clean run reproduces the target', typedText(t) === src, JSON.stringify(typedText(t)))
+
+  const bad = createTrace('ab')
+  press(bad, 'x', 1000) // wrong on 'a'
+  press(bad, 'b', 1200) // correct
+  ok('a wrong key is kept as typed', typedText(bad) === 'xb', JSON.stringify(typedText(bad)))
+
+  const partial = createTrace('hello')
+  typeAll(partial, 'hel')
+  ok('an unfinished run yields only the prefix', typedText(partial) === 'hel', JSON.stringify(typedText(partial)))
+
+  const fixed = createTrace('ab')
+  press(fixed, 'x', 1000) // wrong on 'a'
+  backspace(fixed, 1100)
+  press(fixed, 'a', 1200) // corrected
+  ok('a backspace-then-fix yields the final characters', typedText(fixed) === 'a', JSON.stringify(typedText(fixed)))
+
+  const newline = createTrace('a\nb')
+  press(newline, 'a', 1000)
+  press(newline, 'x', 1200) // wrong on '\n'
+  ok('a wrong newline is kept as the pressed char', typedText(newline) === 'ax', JSON.stringify(typedText(newline)))
+
+  const empty = createTrace('')
+  ok('empty trace yields empty text', typedText(empty) === '')
+}
+
+console.log('\n16. skip accepts a line without typing it')
+{
+  const src = 'def f():\n    return 1\nx = 2\n'
+  const t = createTrace(src)
+  typeAll(t, 'def f():\n')
+  const before = t.cursor
+  ok('skip returns true', skipLine(t, 2000) === true)
+  ok('cursor lands on the next line', t.doc.lineOf[t.cursor] === 2, `got ${t.doc.lineOf[t.cursor]}`)
+  ok('cursor moved forward', t.cursor > before)
+  const skippedLine = '    return 1\n'
+  ok('cursor advanced the whole line', t.cursor === before + skippedLine.length)
+
+  const line2Start = t.doc.lineStarts[1] as number
+  ok('skipped chars carry the SKIPPED state', t.states[line2Start] === SKIPPED)
+
+  typeAll(t, src.slice(t.cursor))
+  finalizeAll(t)
+  const m = metrics(t)
+  ok('complete', isComplete(t))
+  ok('skipped chars counted', m.skipped === skippedLine.length, `got ${m.skipped}`)
+  ok('no errors from a skip', m.errors === 0, `got ${m.errors}`)
+  ok('skipped chars are not typed chars', m.chars === src.length - skippedLine.length, `got ${m.chars}`)
+  ok('skipped line is not scored for indent', m.indentLines === 0, `got ${m.indentLines}`)
+  ok('typedText keeps the skipped source', typedText(t) === src, JSON.stringify(typedText(t)))
+}
+
+console.log('\n17. skipping the last line completes the trace')
+{
+  const src = 'a\nb'
+  const t = createTrace(src)
+  press(t, 'a', 1000)
+  press(t, '\n', 1100)
+  ok('not complete on entry', !isComplete(t))
+  ok('skip last line', skipLine(t, 1200))
+  ok('complete after skipping', isComplete(t))
+  finalizeAll(t)
+  ok('typedText keeps the last line', typedText(t) === src, JSON.stringify(typedText(t)))
+  ok('skipped counts the last line', metrics(t).skipped === 1, `got ${metrics(t).skipped}`)
+}
+
+console.log('\n18. skipping a blank line preserves its newline')
+{
+  const src = 'a\n\nb'
+  const t = createTrace(src)
+  press(t, 'a', 1000)
+  press(t, '\n', 1100)
+  skipLine(t, 1200)
+  ok('cursor reaches the line after the blank', t.doc.lineOf[t.cursor] === 2, `got ${t.doc.lineOf[t.cursor]}`)
+  typeAll(t, 'b')
+  finalizeAll(t)
+  ok('typedText round-trips', typedText(t) === src, JSON.stringify(typedText(t)))
+}
+
+console.log('\n19. aggregateMetrics scores several hunks as one session')
+{
+  const a = createTrace('return 1')
+  const b = createTrace('x = 2')
+  typeAll(a, 'return 1', 100)
+  // Continue the clock so the second hunk's keystrokes come after the first.
+  let now = 1000 + 9 * 100
+  for (const ch of 'x = 2') {
+    press(b, ch, now)
+    now += 100
+  }
+  finalizeAll(a)
+  finalizeAll(b)
+  const agg = aggregateMetrics([a, b])
+  const ma = metrics(a)
+  const mb = metrics(b)
+  ok('chars are the sum', agg.chars === ma.chars + mb.chars, `got ${agg.chars}`)
+  ok('correct is the sum', agg.correct === ma.correct + mb.correct)
+  ok('errors are the sum', agg.errors === ma.errors + mb.errors)
+  near('accuracy over the combined log', agg.accuracy, (ma.correct + mb.correct) / (ma.chars + mb.chars))
+  ok('span covers both hunks', agg.seconds > ma.seconds && agg.seconds > mb.seconds, `got ${agg.seconds}`)
+  ok('an empty bundle is safe', aggregateMetrics([]).chars === 0)
+
+  const bad = createTrace('ab')
+  press(bad, 'x', 1000) // wrong on 'a'
+  press(bad, 'b', 1200)
+  ok('topOffendersAcross reads every trace', topOffendersAcross([a, bad]).some((o) => o.got === 'x'))
 }
 
 console.log(failures === 0 ? '\nAll checks passed.\n' : `\n${failures} FAILED\n`)

@@ -1,7 +1,7 @@
 import { createElement, createRef } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import SourceView from './SourceView.js'
-import { backspace, createTrace, press, type Trace } from '../lib/trace.js'
+import SourceView from '../src/SourceView.js'
+import { backspace, createTrace, press, skipLine, type Trace } from '@devtrace/core'
 
 /**
  * Locks the visual contract: the source character is never replaced. We render
@@ -51,7 +51,7 @@ function type(t: Trace, keys: string): Trace {
  * rendering of "you pressed Enter too early or too late".
  */
 const sourceOnly = (html: string) =>
-  [...html.matchAll(/<span class="[cpw](?: curc)?">([^<]*)<\/span>/g)]
+  [...html.matchAll(/<span class="[cpws](?: curc)?">([^<]*)<\/span>/g)]
     .map((m) => m[1] as string)
     .join('')
 
@@ -112,6 +112,47 @@ console.log('\na backspace removes the annotation')
   ok('the character is back to a plain correct span', /<span class="c">a<\/span>/.test(html))
   ok('the untyped remainder is still there', /class="p curc">b<\/span>/.test(html))
   ok('source is intact', sourceOnly(html) === 'ab', JSON.stringify(sourceOnly(html)))
+}
+
+console.log('\ncontext lines are shown but never scored')
+{
+  const t = type(createTrace('b'), 'b')
+  const html = renderToStaticMarkup(
+    createElement(SourceView, {
+      lines: t.doc.lines,
+      lineStarts: t.doc.lineStarts,
+      states: t.states,
+      wrongAt: t.wrongAt,
+      versions: t.versions,
+      cursor: t.cursor,
+      lineOf: t.doc.lineOf,
+      scrollerRef: createRef<HTMLDivElement>(),
+      firstLine: 10,
+      contextBefore: ['a', 'a2'],
+      contextAfter: ['c'],
+      linePrefix: 'pre',
+      lineSuffix: 'post',
+    }),
+  )
+  ok('all neighbour lines render as context', (html.match(/ln ctxln/g) ?? []).length === 3)
+  ok('context above keeps real line numbers', html.includes('>8</span>') && html.includes('>9</span>'))
+  ok('the traced line keeps its real number', html.includes('>10</span>'))
+  ok('context below is numbered after the trace', html.includes('>11</span>'))
+  ok(
+    'partial line fragments render as inert context',
+    html.includes('<span class="ctx">pre</span>') && html.includes('<span class="ctx">post</span>'),
+  )
+  ok('context is not part of the scored source', sourceOnly(html) === 'b', JSON.stringify(sourceOnly(html)))
+}
+
+console.log('\nskipped lines keep their glyph but are marked')
+{
+  const t = type(createTrace('ab\ncd'), 'ab\n')
+  skipLine(t, 2000)
+  const html = markup(t)
+  ok('skipped chars render with the skip class', /<span class="s">cd<\/span>/.test(html))
+  ok('a skipped char is not a wrong char', !html.includes('class="w"'))
+  ok('source is intact', sourceOnly(html) === 'abcd', JSON.stringify(sourceOnly(html)))
 }
 
 console.log(failures === 0 ? '\nAll render checks passed.\n' : `\n${failures} FAILED\n`)

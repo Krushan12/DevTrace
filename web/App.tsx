@@ -1,19 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import RepoPicker from './components/RepoPicker.js'
 import FileList, { type RepoFile } from './components/FileList.js'
-import SourceView from './components/SourceView.js'
-import Results from './components/Results.js'
 import {
-  backspace,
-  createTrace,
-  finalizeAll,
-  isComplete,
-  metrics,
-  press,
-  tabFill,
-  type Metrics,
-  type Trace,
-} from './lib/trace.js'
+  Results,
+  SourceView,
+  ThemeToggle,
+  useTheme,
+  useTraceInput,
+  type FeedbackKind,
+} from '@devtrace/ui'
+import { createTrace, finalizeAll, metrics, topOffenders, type Metrics, type Trace } from '@devtrace/core'
 import { initAudio, isMuted, playClick, playComplete, setMuted } from './lib/click.js'
 
 type Screen = 'pick' | 'browse' | 'trace' | 'done'
@@ -53,6 +49,7 @@ export default function App() {
   const [final, setFinal] = useState<Metrics | null>(null)
   const [muted, setMutedState] = useState(isMuted())
   const [tick, setTick] = useState(0)
+  const { theme, toggle } = useTheme()
 
   const traceRef = useRef<Trace | null>(null)
   const finalRef = useRef<Metrics | null>(null)
@@ -152,64 +149,26 @@ export default function App() {
 
   // --- input ----------------------------------------------------------------
 
-  useEffect(() => {
-    if (screen !== 'trace') return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.metaKey || e.ctrlKey || e.altKey) return
+  const onFeedback = useCallback((kind: FeedbackKind) => {
+    initAudio()
+    playClick(kind)
+  }, [])
+  const onBump = useCallback(
+    (before: number, after: number) => {
       const t = traceRef.current
-      if (!t) return
+      if (t) bump(t, before, after)
+    },
+    [bump],
+  )
+  const onEscape = useCallback(() => setScreen('browse'), [])
+  const onCompleteInput = useCallback((t: Trace) => finish(t), [finish])
 
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        setScreen('browse')
-        return
-      }
-      if (isComplete(t)) return
-
-      if (e.key === 'Backspace') {
-        e.preventDefault()
-        initAudio()
-        const before = t.cursor
-        if (backspace(t, performance.now())) {
-          playClick('ok')
-          bump(t, before, t.cursor)
-        }
-        return
-      }
-
-      e.preventDefault()
-      initAudio()
-      const now = performance.now()
-      const before = t.cursor
-
-      if (e.key === 'Tab') {
-        const li = lineAt(t, t.cursor)
-        const soFar = t.doc.text.slice(t.doc.lineStarts[li] as number, t.cursor)
-        for (const ch of tabFill(soFar)) press(t, ch, now, 'tab')
-        playClick('tab')
-        bump(t, before, t.cursor)
-        if (isComplete(t)) finish(t)
-        return
-      }
-
-      if (e.key === 'Enter') {
-        press(t, '\n', now, 'newline')
-        playClick('enter')
-      } else if (e.key.length === 1) {
-        const expected = t.doc.text[t.cursor]
-        const ok = press(t, e.key, now)
-        if (ok) playClick(e.key === expected ? 'ok' : 'err')
-      } else {
-        return
-      }
-
-      bump(t, before, t.cursor)
-      if (isComplete(t)) finish(t)
-    }
-
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [screen, bump, finish])
+  useTraceInput(screen === 'trace', trace, {
+    onBump,
+    onComplete: onCompleteInput,
+    onEscape,
+    onFeedback,
+  })
 
   // --- follow the caret -----------------------------------------------------
 
@@ -243,13 +202,25 @@ export default function App() {
 
   // --- render ---------------------------------------------------------------
 
+  const fab = (
+    <div className="theme-fab">
+      <ThemeToggle theme={theme} onToggle={toggle} />
+    </div>
+  )
+
   if (screen === 'pick') {
-    return <RepoPicker onScan={doScan} busy={busy} error={error} recents={recents} />
+    return (
+      <>
+        {fab}
+        <RepoPicker onScan={doScan} busy={busy} error={error} recents={recents} />
+      </>
+    )
   }
 
   if (screen === 'browse') {
     return (
       <div>
+        {fab}
         {error && <div className="err floating">{error}</div>}
         <FileList files={files} onStart={startTrace} onBack={() => setScreen('pick')} />
         <div className="repohead">
@@ -261,14 +232,17 @@ export default function App() {
 
   if (screen === 'done' && trace && final) {
     return (
-      <Results
-        trace={trace}
-        metrics={final}
-        label={chunkLabel}
-        onRetrace={retrace}
-        onAnother={() => setScreen('browse')}
-        onFiles={() => setScreen('browse')}
-      />
+      <>
+        {fab}
+        <Results
+          offenders={topOffenders(trace)}
+          metrics={final}
+          label={chunkLabel}
+          onRetrace={retrace}
+          onAnother={() => setScreen('browse')}
+          onFiles={() => setScreen('browse')}
+        />
+      </>
     )
   }
 
@@ -294,6 +268,7 @@ export default function App() {
         <button className="ghost" onClick={toggleMute}>
           {muted ? '🔇' : '🔊'}
         </button>
+        <ThemeToggle theme={theme} onToggle={toggle} />
         <button className="ghost" onClick={abandon}>
           End
         </button>
@@ -313,7 +288,7 @@ export default function App() {
       <footer className="foot">
         Type over the characters. Errors turn red and the cursor keeps moving —
         fix them with ⌫ if you want the accuracy to count.
-        <span className="esc">esc to exit</span>
+        <span className="esc">⌃⏎ to skip a line · esc to exit</span>
       </footer>
     </div>
   )

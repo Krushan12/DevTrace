@@ -2,16 +2,29 @@
   "name": "devtrace",
   "private": true,
   "type": "module",
+  "workspaces": [
+    "core",
+    "ui",
+    "vscode",
+    "opencode-plugin"
+  ],
   "scripts": {
     "dev": "concurrently -n server,web -c cyan,magenta \"npm:dev:server\" \"npm:dev:web\"",
     "dev:server": "tsx watch server/index.ts",
     "dev:web": "vite",
     "build": "vite build",
     "start": "tsx server/index.ts",
-    "test": "tsx web/lib/trace.test.ts && tsx web/components/SourceView.test.tsx",
+    "test": "npm run test:core && npm run test:ui && npm run test:plugin",
+    "test:core": "tsx core/test/trace.test.ts && tsx core/test/diff.test.ts",
+    "test:ui": "tsx ui/test/SourceView.test.tsx && tsx ui/test/FileTraceView.test.tsx",
+    "test:plugin": "tsx opencode-plugin/test/bridge.test.ts",
+    "build:plugin": "npm --workspace opencode-devtrace run build",
+    "package:extension": "npm --workspace devtrace run package",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@devtrace/core": "*",
+    "@devtrace/ui": "*",
     "fastify": "^5.2.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"

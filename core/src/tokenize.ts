@@ -1,4 +1,4 @@
-import { CORRECT, PENDING, WRONG, type CharState } from './trace.js'
+import { CONTEXT, CORRECT, PENDING, SKIPPED, WRONG, type CharState } from './trace.js'
 import { showChar } from './format.js'
 
 /**
@@ -31,7 +31,13 @@ export function buildRuns(
   caretCol: number,
   wrongAt: Map<number, string>,
 ): Run[] {
-  if (text.length === 0) return [{ t: ' ', c: PENDING, caret: true, cur: true }]
+  // An empty line still needs a placeholder so the caret can sit on it, but only
+  // when the caret is actually on this line — otherwise a whole-file view would
+  // draw a caret on every blank line it renders.
+  if (text.length === 0) {
+    const here = caretCol === 0
+    return [{ t: ' ', c: PENDING, caret: here, cur: here }]
+  }
 
   const out: Run[] = []
   let caretPlaced = false
@@ -79,5 +85,13 @@ export function buildRuns(
 }
 
 export function stateClass(c: CharState): string {
-  return c === CORRECT ? 'c' : c === WRONG ? 'w' : 'p'
+  return c === CORRECT
+    ? 'c'
+    : c === WRONG
+      ? 'w'
+      : c === SKIPPED
+        ? 's'
+        : c === CONTEXT
+          ? 'ctx'
+          : 'p'
 }
