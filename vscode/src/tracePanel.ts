@@ -13,12 +13,21 @@ export interface TracePanelResult {
   action: 'save' | 'discard'
   /** What was typed for each region, aligned with the regions sent in. */
   typedTexts: string[]
+  /** Net WPM / accuracy of the session, when the webview reported them. */
+  metrics?: { netWpm: number; accuracy: number }
 }
 
 interface PendingInit {
   after: string
   label: string
   regions: TraceRegionInit[]
+  mode?: 'proposal' | 'tour'
+  brief?: string
+}
+
+interface TraceMetrics {
+  netWpm?: number
+  accuracy?: number
 }
 
 /**
@@ -65,12 +74,13 @@ export class TracePanel {
     after: string,
     regions: TraceRegionInit[],
     label: string,
+    opts?: { mode?: 'proposal' | 'tour'; brief?: string },
   ): Promise<TracePanelResult> {
     const instance = TracePanel.current ?? new TracePanel(extensionUri)
     TracePanel.current = instance
     instance.panel.title = `DevTrace · ${label}`
     instance.panel.reveal(vscode.ViewColumn.Beside, false)
-    return instance.begin(after, label, regions)
+    return instance.begin(after, label, regions, opts)
   }
 
   /** Cancel any in-flight request without writing. */
@@ -78,10 +88,15 @@ export class TracePanel {
     TracePanel.current?.settle({ action: 'discard', typedTexts: [] })
   }
 
-  private begin(after: string, label: string, regions: TraceRegionInit[]): Promise<TracePanelResult> {
+  private begin(
+    after: string,
+    label: string,
+    regions: TraceRegionInit[],
+    opts?: { mode?: 'proposal' | 'tour'; brief?: string },
+  ): Promise<TracePanelResult> {
     return new Promise((resolve) => {
       this.resolver = resolve
-      this.pending = { after, label, regions }
+      this.pending = { after, label, regions, mode: opts?.mode, brief: opts?.brief }
       this.flush()
     })
   }
@@ -93,13 +108,15 @@ export class TracePanel {
       after: this.pending.after,
       label: this.pending.label,
       regions: this.pending.regions,
+      mode: this.pending.mode,
+      brief: this.pending.brief,
     })
     this.pending = null
   }
 
   private onMessage(message: unknown): void {
     if (typeof message !== 'object' || message === null) return
-    const m = message as { type?: string; texts?: unknown; pct?: number }
+    const m = message as { type?: string; texts?: unknown; pct?: number; metrics?: TraceMetrics }
     if (m.type === 'ready') {
       this.ready = true
       this.flush()
@@ -111,7 +128,14 @@ export class TracePanel {
     }
     if (m.type === 'save') {
       const texts = Array.isArray(m.texts) ? m.texts.filter((x): x is string => typeof x === 'string') : []
-      this.settle({ action: 'save', typedTexts: texts })
+      const metrics =
+        m.metrics && typeof m.metrics === 'object'
+          ? {
+              netWpm: typeof m.metrics.netWpm === 'number' ? m.metrics.netWpm : 0,
+              accuracy: typeof m.metrics.accuracy === 'number' ? m.metrics.accuracy : 0,
+            }
+          : undefined
+      this.settle({ action: 'save', typedTexts: texts, metrics })
       return
     }
     if (m.type === 'discard') {

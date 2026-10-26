@@ -2,7 +2,7 @@
   "name": "devtrace",
   "displayName": "DevTrace",
   "description": "Trace code you actually write — AI proposes, you type it. Code-aware typing practice inside the editor.",
-  "version": "0.0.5",
+  "version": "0.0.7",
   "private": true,
   "publisher": "devtrace",
   "license": "MIT",
@@ -16,7 +16,8 @@
   "main": "./dist/extension.js",
   "activationEvents": [
     "onStartupFinished",
-    "onView:devtrace.pending"
+    "onView:devtrace.pending",
+    "onView:devtrace.tour"
   ],
   "contributes": {
     "viewsContainers": {
@@ -31,6 +32,12 @@
     "views": {
       "devtrace": [
         {
+          "id": "devtrace.tour",
+          "name": "Learning path",
+          "icon": "resources/devtrace.svg",
+          "contextualTitle": "DevTrace"
+        },
+        {
           "id": "devtrace.pending",
           "name": "Pending changes",
           "icon": "resources/devtrace.svg",
@@ -39,6 +46,10 @@
       ]
     },
     "viewsWelcome": [
+      {
+        "view": "devtrace.tour",
+        "contents": "No learning path yet. Ask OpenCode to \u201ctour me through this project\u201d and it will order the codebase into explain-then-type steps.\n[Trace the next step](command:devtrace.tour.next)"
+      },
       {
         "view": "devtrace.pending",
         "when": "!devtrace.stagingEnabled",
@@ -70,6 +81,36 @@
       {
         "command": "devtrace.installOpencodePlugin",
         "title": "DevTrace: Install OpenCode Plugin"
+      },
+      {
+        "command": "devtrace.tour.trace",
+        "title": "Trace Step",
+        "category": "DevTrace",
+        "icon": "$(keyboard)"
+      },
+      {
+        "command": "devtrace.tour.next",
+        "title": "DevTrace: Trace Next Learning Step",
+        "category": "DevTrace",
+        "icon": "$(play)"
+      },
+      {
+        "command": "devtrace.tour.reveal",
+        "title": "Reveal Step File",
+        "category": "DevTrace",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "devtrace.tour.reset",
+        "title": "Clear Learning Path Progress",
+        "category": "DevTrace",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "devtrace.tour.refresh",
+        "title": "Refresh Learning Path",
+        "category": "DevTrace",
+        "icon": "$(refresh)"
       },
       {
         "command": "devtrace.pending.trace",
@@ -167,6 +208,21 @@
     "menus": {
       "view/title": [
         {
+          "command": "devtrace.tour.next",
+          "when": "view == devtrace.tour && devtrace.tourHasTour",
+          "group": "navigation@0"
+        },
+        {
+          "command": "devtrace.tour.refresh",
+          "when": "view == devtrace.tour",
+          "group": "navigation@1"
+        },
+        {
+          "command": "devtrace.tour.reset",
+          "when": "view == devtrace.tour && devtrace.tourHasTour",
+          "group": "navigation@2"
+        },
+        {
           "command": "devtrace.enableStaging",
           "when": "view == devtrace.pending && !devtrace.stagingEnabled",
           "group": "navigation@0"
@@ -194,6 +250,11 @@
       ],
       "view/item/context": [
         {
+          "command": "devtrace.tour.reveal",
+          "when": "view == devtrace.tour && viewItem == devtrace.tour.done",
+          "group": "1_open"
+        },
+        {
           "command": "devtrace.pending.trace",
           "when": "view == devtrace.pending && viewItem == devtrace.pending",
           "group": "inline@1"
@@ -210,6 +271,14 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "devtrace.tour.trace",
+          "when": "false"
+        },
+        {
+          "command": "devtrace.tour.reveal",
+          "when": "false"
+        },
         {
           "command": "devtrace.pending.trace",
           "when": "false"

@@ -39,9 +39,13 @@ interface InitMessage {
   after: string
   label: string
   regions: RegionInit[]
+  /** `proposal` (AI diffs, default) or `tour` (explain-then-type the whole range). */
+  mode?: 'proposal' | 'tour'
+  /** Tour mode only: the plain-English explanation shown before typing. */
+  brief?: string
 }
 
-type Phase = 'idle' | 'trace' | 'done'
+type Phase = 'idle' | 'brief' | 'trace' | 'done'
 
 /** Offset -> line, over the whole proposed file. */
 function lineAtDoc(doc: Doc, off: number): number {
@@ -50,9 +54,31 @@ function lineAtDoc(doc: Doc, off: number): number {
   return doc.lineOf[o] as number
 }
 
+function ProposalPane({ regions, activeIndex }: { regions: RegionInit[]; activeIndex: number }) {
+  return (
+    <aside className="proposal-pane" aria-label="AI proposed edits">
+      <div className="proposal-kicker">AI proposal</div>
+      <p className="proposal-copy">Read the change first. Only the separate trace surface accepts your typing.</p>
+      <div className="proposal-list">
+        {regions.map((region, index) => (
+          <section className={`proposal-card${index === activeIndex ? ' active' : ''}`} key={`${region.start}-${index}`}>
+            <div className="proposal-card-head">
+              <span>Change {index + 1}</span>
+              <span>{region.target.length} chars</span>
+            </div>
+            <pre>{region.target || '(deletion)'}</pre>
+          </section>
+        ))}
+      </div>
+    </aside>
+  )
+}
+
 function App() {
   const [phase, setPhase] = useState<Phase>('idle')
   const [label, setLabel] = useState('')
+  const [mode, setMode] = useState<NonNullable<InitMessage['mode']>>('proposal')
+  const [brief, setBrief] = useState('')
   const [activeIndex, setActiveIndex] = useState(-1)
   const [final, setFinal] = useState<Metrics | null>(null)
   const [offenders, setOffenders] = useState<Offender[]>([])
@@ -120,6 +146,8 @@ function App() {
       versionsRef.current = versions
 
       setLabel(m.label)
+      setMode(m.mode ?? 'proposal')
+      setBrief(m.brief ?? '')
       setFinal(null)
       setOffenders([])
       let first = -1
@@ -131,7 +159,7 @@ function App() {
       }
       setActiveIndex(first)
       setTick(0)
-      setPhase('trace')
+      setPhase(m.mode === 'tour' ? 'brief' : 'trace')
       postProgress()
     }
     window.addEventListener('message', onMessage)
@@ -183,9 +211,18 @@ function App() {
     vscode.postMessage({ type: 'discard' })
   }, [])
 
+  const start = useCallback(() => {
+    setPhase('trace')
+  }, [])
+
   const save = useCallback(() => {
     const traces = tracesRef.current
-    vscode.postMessage({ type: 'save', texts: traces.map((t) => typedText(t)) })
+    const finalMetrics = aggregateMetrics(traces)
+    vscode.postMessage({
+      type: 'save',
+      texts: traces.map((t) => typedText(t)),
+      metrics: { netWpm: finalMetrics.netWpm, accuracy: finalMetrics.accuracy },
+    })
   }, [])
 
   const retrace = useCallback(() => {
@@ -238,18 +275,48 @@ function App() {
 
   if (phase === 'idle') return <div className="empty">Waiting for a change to trace…</div>
 
+  if (phase === 'brief') {
+    return (
+      <div className="tour-brief">
+        <header className="topbar">
+          <span className="chunklabel">{label}</span>
+          <ThemeToggle theme={theme} onToggle={toggle} />
+        </header>
+        <main className="brief-main">
+          <article className="brief-card">
+            <div className="brief-kicker">Before you type</div>
+            <div className="brief-body">{brief}</div>
+            <div className="brief-hint">
+              Reading is step one. When you trace this code below, your hands
+              write it too — that is how it stays.
+            </div>
+          </article>
+        </main>
+        <footer className="brief-actions">
+          <button className="go" onClick={start}>
+            Start typing
+          </button>
+          <button className="ghost" onClick={discard}>
+            Later
+          </button>
+        </footer>
+      </div>
+    )
+  }
+
   const doc = docRef.current
   const traces = tracesRef.current
   const regions = regionsRef.current
 
   if (phase === 'done' && final) {
-    const mismatch = regions.some((r, i) => typedText(traces[i] as Trace) !== r.target)
+    const mismatch =
+      mode === 'proposal' && regions.some((r, i) => typedText(traces[i] as Trace) !== r.target)
     return (
       <Results
         offenders={offenders}
         metrics={final}
         label={label}
-        title="Change traced"
+        title={mode === 'tour' ? 'Step typed' : 'Change traced'}
         note={
           mismatch ? (
             <div className="panel-note">
@@ -263,11 +330,11 @@ function App() {
         actions={
           <div className="ractions">
             <button className="go" onClick={save}>
-              Save typed code
+              {mode === 'tour' ? 'Mark step done' : 'Save typed code'}
             </button>
             <button onClick={retrace}>Trace again</button>
             <button className="ghost" onClick={discard}>
-              Discard
+              {mode === 'tour' ? 'Later' : 'Discard'}
             </button>
           </div>
         }
@@ -299,21 +366,39 @@ function App() {
         </button>
       </header>
 
-      <FileTraceView
-        lines={doc.lines}
-        lineStarts={doc.lineStarts}
-        lineOf={doc.lineOf}
-        states={statesRef.current}
-        wrongAt={wrongAtRef.current}
-        versions={versionsRef.current}
-        cursorAfter={cursorAfter}
-        scrollerRef={scrollerRef}
-      />
+      <div className="trace-layout">
+        {mode === 'proposal' && <ProposalPane regions={regions} activeIndex={activeIndex} />}
+        <main className="typing-surface">
+          <div className="surface-head">
+            <span>Type the highlighted change</span>
+            <span className="surface-step">{activeIndex + 1} / {regions.filter((r) => r.target.length > 0).length}</span>
+          </div>
+          <FileTraceView
+            lines={doc.lines}
+            lineStarts={doc.lineStarts}
+            lineOf={doc.lineOf}
+            states={statesRef.current}
+            wrongAt={wrongAtRef.current}
+            versions={versionsRef.current}
+            cursorAfter={cursorAfter}
+            scrollerRef={scrollerRef}
+          />
+        </main>
+      </div>
 
       <footer className="foot">
-        The whole file is shown; only the highlighted changes are traced. Type them
-        in order — the untouched code stays as it is. Errors are kept; saving writes
-        exactly what you type.
+        {mode === 'proposal' ? (
+          <>
+            The whole file is shown; only the highlighted changes are traced. Type them
+            in order — the untouched code stays as it is. Errors are kept; saving writes
+            exactly what you type.
+          </>
+        ) : (
+          <>
+            Every character of this code is traced. Errors are kept, so keep moving —
+            finish the pass, then retrace the mess if you want it clean.
+          </>
+        )}
         <span className="esc">ctrl/⌘+enter skips a line · esc to discard</span>
       </footer>
     </div>

@@ -50,20 +50,21 @@ async function setup(file: string, contents: string) {
   return { root, run, pending, cleanup: () => rm(root, { recursive: true, force: true }) }
 }
 
-console.log('\ncoalescing same-file edits into one pending record')
+console.log('\nsame-file edits stay as separate pending records')
 
 {
   const t = await setup('a.ts', 'const a = 1\nconst b = 2\n')
   await t.run('edit', { filePath: 'a.ts', oldString: 'const a = 1', newString: 'const a = 10' })
   await t.run('edit', { filePath: 'a.ts', oldString: 'const b = 2', newString: 'const b = 20' })
   const records = await t.pending()
-  ok('one record for two edits', records.length === 1, `got ${records.length}`)
+  ok('two records for two edits', records.length === 2, `got ${records.length}`)
+  ok('first edit is isolated', records.some((r) => r.after === 'const a = 10\nconst b = 2\n'))
   ok(
-    'both hunks composed',
-    records[0]?.after === 'const a = 10\nconst b = 20\n',
-    `got ${JSON.stringify(records[0]?.after)}`,
+    'second edit composes on staged text',
+    records.some((r) => r.after === 'const a = 10\nconst b = 20\n'),
+    `got ${JSON.stringify(records.map((r) => r.after))}`,
   )
-  ok('before stays the committed text', records[0]?.before === 'const a = 1\nconst b = 2\n')
+  ok('each before stays the committed text', records.every((r) => r.before === 'const a = 1\nconst b = 2\n'))
   await t.cleanup()
 }
 
@@ -75,8 +76,8 @@ console.log('\ndependent edits compose on top of the pending text')
   // References text that only exists in the staged (not yet written) version.
   await t.run('edit', { filePath: 'b.ts', oldString: 'let x = 1', newString: 'let x = 2' })
   const records = await t.pending()
-  ok('one record', records.length === 1, `got ${records.length}`)
-  ok('dependent edit applied', records[0]?.after === 'let x = 2\n', `got ${JSON.stringify(records[0]?.after)}`)
+  ok('two records', records.length === 2, `got ${records.length}`)
+  ok('dependent edit applied', records.some((r) => r.after === 'let x = 2\n'), `got ${JSON.stringify(records.map((r) => r.after))}`)
   await t.cleanup()
 }
 
@@ -99,8 +100,8 @@ console.log('\na write replaces the staged file')
   await t.run('edit', { filePath: 'e.ts', oldString: 'one', newString: 'two' })
   await t.run('write', { filePath: 'e.ts', content: 'three\n' })
   const records = await t.pending()
-  ok('one record', records.length === 1, `got ${records.length}`)
-  ok('write wins', records[0]?.after === 'three\n', `got ${JSON.stringify(records[0]?.after)}`)
+  ok('two records', records.length === 2, `got ${records.length}`)
+  ok('write is its own change', records.some((r) => r.after === 'three\n'), `got ${JSON.stringify(records.map((r) => r.after))}`)
   await t.cleanup()
 }
 
@@ -112,6 +113,22 @@ console.log('\nno-op edit stages nothing')
   const records = await t.pending()
   ok('no record', records.length === 0, `got ${records.length}`)
   ok('no stray temp file', !existsSync(join(t.root, '.devtrace', 'pending', 'tmp')))
+  await t.cleanup()
+}
+
+console.log('\nbookkeeping inside .devtrace/ passes through unstaged')
+
+{
+  const t = await setup('g.ts', 'g\n')
+  const tour = { title: 'Learn', goal: 'understand', steps: [] }
+  await t.run('write', { filePath: '.devtrace/tour.json', content: JSON.stringify(tour) })
+  await t.run('edit', {
+    filePath: join(t.root, '.devtrace', 'tour-progress.json'),
+    oldString: '{}',
+    newString: '{"steps":{}}',
+  })
+  const records = await t.pending()
+  ok('neither write was staged', records.length === 0, `got ${records.length}`)
   await t.cleanup()
 }
 

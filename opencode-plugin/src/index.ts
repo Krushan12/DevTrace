@@ -7,18 +7,18 @@
  * developer *type the change by hand* over a ghost overlay. Nothing is written
  * until the developer has typed it.
  *
- * Edits to the same file are coalesced into a single pending record: each new
- * tool call composes on top of what is already staged, so one file shows up
- * once in the queue with every hunk, however many calls the agent made.
+ * Every tool call gets its own pending record. Later calls still compose on top
+ * of the newest staged text so dependent edits are not lost, but the queue and
+ * the developer-facing trace remain one-to-one with the AI's edits.
  *
  * Opt-in: staging activates when `DEVTRACE_STAGE=1` is set, or when a
  * `.devtrace/` directory exists in the worktree (the extension creates it).
  */
 
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
-import { isAbsolute, join, resolve } from 'node:path'
+import { isAbsolute, join, resolve, sep } from 'node:path'
 
 interface PluginContext {
   directory: string
@@ -119,6 +119,11 @@ export const DevTracePlugin = async ({ directory, worktree, client }: PluginCont
     if (typeof filePath !== 'string' || filePath.length === 0) return
 
     const abs = isAbsolute(filePath) ? filePath : resolve(root, filePath)
+
+    // DevTrace's own bookkeeping (tour.json, tour-progress.json, ...) lives in
+    // the queue directory. The agent must be able to write it directly, so
+    // writes there pass through untouched instead of being staged.
+    if (abs === devDir || abs.startsWith(devDir + sep)) return
     const disk = await readSafe(abs)
 
     // Compose on top of anything already staged for this file, rather than the
@@ -133,20 +138,14 @@ export const DevTracePlugin = async ({ directory, worktree, client }: PluginCont
     if (after === base) return
 
     await mkdir(pendingDir, { recursive: true })
-    const id = newest ? newest.id : randomUUID()
-    const ts = newest ? newest.ts : Date.now()
+    const id = randomUUID()
+    const ts = Date.now()
     // `before` mirrors the committed file so the extension's diff against disk
     // yields exactly the pending hunks.
     const record: StagedRecord = { id, ts, tool, file: abs, before: disk, after }
     const tmp = join(pendingDir, `${id}.json.tmp`)
     await writeFile(tmp, JSON.stringify(record), 'utf8')
     await rename(tmp, join(pendingDir, `${id}.json`))
-
-    // Retire any older duplicate records for this file (legacy queue entries),
-    // so the file occupies exactly one slot.
-    for (const r of prior) {
-      if (r.id !== id) await unlink(join(pendingDir, `${r.id}.json`)).catch(() => {})
-    }
 
     await client?.app?.log?.({
       body: {
@@ -170,6 +169,38 @@ export const DevTracePlugin = async ({ directory, worktree, client }: PluginCont
 
   const devTraceTools = new Set(['edit', 'write', 'multiedit'])
 
+  /**
+   * How the agent authors guided learning tours. Returned as separate rules so
+   * the staging rule and the tour protocol stay individually readable.
+   */
+  function tourRules(): string[] {
+    return [
+      'Guided tours: when the developer asks to learn, understand, or be guided through ' +
+        'this codebase (e.g. "teach me this project", "tour me through the code"), build a ' +
+        'learning path instead of summarizing in chat. First explore enough of the repo to ' +
+        'order it: entry point first, then config/build, then the heart of the domain logic, ' +
+        'then the surrounding surfaces. Then write .devtrace/tour.json (this exact shape: ' +
+        'title, goal, steps[]) where each step is ' +
+        '{ id: "step-01", title, file (workspace-relative), start (1-based line), lines, why ' +
+        '(why this step comes next), concept (the single idea it teaches), explanation ' +
+        '(plain-English walk-through of that code — say what it does, what its inputs and ' +
+        'outputs are, and which other parts call it) }. Keep each step\'s range modest: ' +
+        '6-30 lines the developer will type. 6-10 ordered steps beats one giant file. ' +
+        'Writing tour.json and tour-progress.json inside the DevTrace directory is allowed ' +
+        'directly — those files are NOT staged. Files show up in order in the DevTrace ' +
+        'VS Code sidebar\'s "Learning path" list; the developer opens each, reads your ' +
+        'explanation, and types the code.',
+      'Adaptation: BEFORE writing or updating tour.json, read .devtrace/tour-progress.json ' +
+        '(create-tolerant; the extension maintains it). Rows look like ' +
+        '"step-id: done=true, attempts=2, last 41 wpm / 96% — title". A row marked ' +
+        '"not completed — retrace wanted" means the developer struggled: remix the remaining ' +
+        'unread steps around that concept (different file, shorter range, or a scaffolding ' +
+        'step) instead of moving on. When every step is done, offer a next tour that builds ' +
+        'on the goal, or propose a small practice change (a real edit through the normal ' +
+        'write tools) for the developer to type. Teaching text answers "why", not just "what".',
+    ]
+  }
+
   return {
     'tool.execute.before': stage,
 
@@ -185,6 +216,7 @@ export const DevTracePlugin = async ({ directory, worktree, client }: PluginCont
           'starting with "DevTrace:". Treat that result as SUCCESS. Do not retry the edit, ' +
           'do not re-read the file expecting the change to be present yet, and do not ' +
           'apologize or warn about the file being unchanged. Continue with the task.',
+        ...tourRules(),
       )
     },
 

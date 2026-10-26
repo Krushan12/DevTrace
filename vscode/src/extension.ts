@@ -2,12 +2,14 @@ import * as vscode from 'vscode'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { existsSync } from 'node:fs'
-import { diffHunks, type Hunk, type Metrics, type Trace } from '@devtrace/core'
+import { diffHunks, lineSlice, type Hunk, type Metrics, type Trace } from '@devtrace/core'
 import { TraceSession } from './session.js'
 import { ResultsPanel } from './results.js'
 import { PendingStore, type StagedChange, type StagedEntry } from './staging.js'
 import { PendingDecorations, PendingTreeProvider } from './pendingView.js'
 import { TracePanel } from './tracePanel.js'
+import { TourStore } from './tour.js'
+import { TourTreeProvider } from './tourView.js'
 
 interface LastResults {
   trace: Trace
@@ -22,6 +24,9 @@ let extensionUri: vscode.Uri
 let store: PendingStore
 let treeProvider: PendingTreeProvider
 let treeView: vscode.TreeView<unknown>
+let tourStore: TourStore
+let tourProvider: TourTreeProvider
+let tourTreeView: vscode.TreeView<unknown>
 
 let processing = false
 let autoPumping = false
@@ -175,6 +180,81 @@ function autoTraceEnabled(): boolean {
   return vscode.workspace.getConfiguration('devtrace').get<boolean>('autoTrace', false)
 }
 
+/**
+ * Trace one learning-path step: read the file, cut the step's range, explain it
+ * in the panel, then have the developer type it. A save records the score in
+ * tour-progress.json — nothing is ever written to the file itself, since the
+ * step points at code that already exists.
+ */
+async function traceTourStep(stepId: string): Promise<void> {
+  const tour = tourStore.getTour()
+  if (!tour) {
+    void vscode.window.showInformationMessage(
+      'DevTrace: no learning path yet. Ask OpenCode to "tour me through this project".',
+    )
+    return
+  }
+  const idx = tour.steps.findIndex((s) => s.id === stepId)
+  if (idx < 0) {
+    void vscode.window.showWarningMessage(
+      `DevTrace: no step "${stepId}" in the current learning path.`,
+    )
+    return
+  }
+  const step = tour.steps[idx] as NonNullable<(typeof tour.steps)[number]>
+  const folder = vscode.workspace.workspaceFolders?.[0]
+  if (!folder) return
+
+  const abs = vscode.Uri.joinPath(folder.uri, step.file.replace(/^\//, ''))
+  let text: string
+  try {
+    text = (await vscode.workspace.openTextDocument(abs)).getText()
+  } catch {
+    void vscode.window.showWarningMessage(
+      `DevTrace: the step points at ${step.file}, which could not be read. The tour may be stale — ask OpenCode to rebuild it.`,
+    )
+    return
+  }
+
+  const target = lineSlice(text, step.start, step.lines)
+  if (!target.trim()) {
+    void vscode.window.showWarningMessage(`DevTrace: lines ${step.start}+ of ${step.file} are empty.`)
+    return
+  }
+
+  const label =
+    `Step ${idx + 1}/${tour.steps.length} · ${step.title}` +
+    (step.concept ? ` — ${step.concept}` : '')
+
+  statusItem.text = '$(keyboard) DevTrace 0%'
+  statusItem.tooltip = 'Tracing a learning-path step — Esc pauses, does not record'
+  statusItem.show()
+
+  const result = await TracePanel.show(extensionUri, target, [{ start: 0, target }], label, {
+    mode: 'tour',
+    brief: step.explanation,
+  })
+
+  statusItem.text = '$(keyboard) DevTrace'
+  tourProvider.refresh()
+
+  if (result.action !== 'save' || !result.metrics) return
+
+  await tourStore.recordAttempt(stepId, result.metrics)
+  const m = result.metrics
+  const done = tourStore.done(stepId)
+  const next = tour.steps[idx + 1]
+  const summary =
+    `DevTrace · ${step.title}: ${Math.round(m.netWpm)} wpm, ` +
+    `${Math.round(m.accuracy * 100)}% — ${done ? 'step complete' : 'retrace this step to finish it'}`
+  const actions = next && done ? ['Next step'] : []
+  const pick = await vscode.window.showInformationMessage(
+    summary + (next && done ? ` Up next: ${next.title}.` : ''),
+    ...actions,
+  )
+  if (pick === 'Next step' && next) await traceTourStep(next.id)
+}
+
 /** With auto-trace on, work through the queue until one is discarded or empty. */
 async function autoPump(): Promise<void> {
   if (autoPumping || !autoTraceEnabled()) return
@@ -299,6 +379,26 @@ export function activate(context: vscode.ExtensionContext): void {
     await autoPump()
   })()
 
+  // The learning path: an AI-authored tour.json the developer works through by
+  // typing each step.
+  tourStore = new TourStore()
+  tourProvider = new TourTreeProvider(tourStore)
+  tourTreeView = vscode.window.createTreeView('devtrace.tour', {
+    treeDataProvider: tourProvider,
+  })
+  const updateTourContext = (): void => {
+    void vscode.commands.executeCommand('setContext', 'devtrace.tourHasTour', tourStore.loaded)
+    const tour = tourStore.getTour()
+    let badge: { value: number; tooltip: string } | undefined
+    if (tour) {
+      const left = tour.steps.filter((s) => !tourStore.done(s.id)).length
+      badge = { value: left, tooltip: 'steps left to trace' }
+    }
+    tourTreeView.badge = badge
+  }
+  tourStore.onDidChange(updateTourContext)
+  void tourStore.start()
+
   const traceSelection = vscode.commands.registerCommand('devtrace.traceSelection', async () => {
     const editor = vscode.window.activeTextEditor
     if (!editor) return
@@ -389,6 +489,64 @@ export function activate(context: vscode.ExtensionContext): void {
   const enableStaging = vscode.commands.registerCommand('devtrace.enableStaging', () => setStaging(true))
   const disableStaging = vscode.commands.registerCommand('devtrace.disableStaging', () => setStaging(false))
 
+  const traceTour = vscode.commands.registerCommand('devtrace.tour.trace', async (id: string) => {
+    if (!tourStore.loaded) {
+      void vscode.window.showInformationMessage(
+        'DevTrace: no learning path yet. Ask OpenCode to "tour me through this project".',
+      )
+      return
+    }
+    await traceTourStep(id)
+  })
+
+  const traceNextTourStep = vscode.commands.registerCommand('devtrace.tour.next', async () => {
+    const tour = tourStore.getTour()
+    if (!tour) {
+      void vscode.window.showInformationMessage(
+        'DevTrace: no learning path yet. Ask OpenCode to "tour me through this project".',
+      )
+      return
+    }
+    const step = tour.steps.find((s) => !tourStore.done(s.id)) ?? tour.steps[0]
+    if (step) await traceTourStep(step.id)
+  })
+
+  const revealTourStep = vscode.commands.registerCommand('devtrace.tour.reveal', async (id: string) => {
+    const tour = tourStore.getTour()
+    const step = tour?.steps.find((s) => s.id === id)
+    if (!tour || !step) return
+    const folder = vscode.workspace.workspaceFolders?.[0]
+    if (!folder) return
+    try {
+      const doc = await vscode.workspace.openTextDocument(vscode.Uri.joinPath(folder.uri, step.file))
+      const editor = await vscode.window.showTextDocument(doc, { preview: true })
+      const line = Math.min(Math.max(0, step.start - 1), doc.lineCount - 1)
+      editor.revealRange(
+        new vscode.Range(line, 0, Math.max(line, Math.min(line + step.lines, doc.lineCount) - 1), 0),
+        vscode.TextEditorRevealType.InCenter,
+      )
+    } catch {
+      void vscode.window.showWarningMessage(`DevTrace: could not open ${step.file}.`)
+    }
+  })
+
+  const resetTourProgress = vscode.commands.registerCommand('devtrace.tour.reset', async () => {
+    if (!tourStore.loaded) {
+      void vscode.window.showInformationMessage('DevTrace: no learning path to reset.')
+      return
+    }
+    const pick = await vscode.window.showWarningMessage(
+      'Clear all learning-path progress? Your scores are deleted; the steps stay.',
+      { modal: true },
+      'Clear progress',
+    )
+    if (pick === 'Clear progress') await tourStore.resetProgress()
+  })
+
+  const refreshTour = vscode.commands.registerCommand('devtrace.tour.refresh', () =>
+    tourProvider.refresh(),
+  )
+
   const configListener = vscode.workspace.onDidChangeConfiguration((e) => {
     if (e.affectsConfiguration('devtrace.enabled') || e.affectsConfiguration('devtrace.queueDir')) {
       void updateStagingContext()
@@ -423,6 +581,9 @@ export function activate(context: vscode.ExtensionContext): void {
     treeProvider,
     treeView,
     decorations,
+    tourStore,
+    tourProvider,
+    tourTreeView,
     vscode.window.registerFileDecorationProvider(decorations),
     traceSelection,
     traceFile,
@@ -438,6 +599,11 @@ export function activate(context: vscode.ExtensionContext): void {
     disableStaging,
     configListener,
     installPlugin,
+    traceTour,
+    traceNextTourStep,
+    revealTourStep,
+    resetTourProgress,
+    refreshTour,
 
     // Special keys. Bound only while a session runs so the editor never inserts
     // anything for them — the document must stay immutable.

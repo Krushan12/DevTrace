@@ -251,6 +251,35 @@ input:focus { border-color: var(--accent); }
 
 .empty { padding: 40px 20px; color: var(--fg-faint); text-align: center; font-size: 13px; }
 
+.tour-brief { display: flex; flex-direction: column; height: 100%; }
+
+.brief-main { flex: 1; overflow: auto; }
+.brief-card {
+  max-width: 640px;
+  margin: 34px auto 20px;
+  padding: 22px 26px 24px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--bg-2);
+}
+.brief-kicker {
+  color: var(--accent);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin-bottom: 14px;
+}
+.brief-body { white-space: pre-wrap; line-height: 1.65; font-size: 14px; }
+.brief-hint {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  color: var(--fg-dim);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.brief-actions { display: flex; gap: 10px; justify-content: center; padding: 16px 0 24px; }
+
 .repohead {
   position: fixed;
   bottom: 10px;
@@ -272,10 +301,36 @@ input:focus { border-color: var(--accent); }
 
 .tracing { display: flex; flex-direction: column; height: 100%; }
 
+.trace-layout { display: flex; flex: 1; min-height: 0; background: var(--bg); }
+.proposal-pane {
+  width: 270px;
+  flex: 0 0 auto;
+  padding: 24px 18px;
+  overflow-y: auto;
+  border-right: 1px solid var(--line);
+  background: var(--bg-2);
+}
+.proposal-kicker, .surface-head {
+  color: var(--fg-faint);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+}
+.proposal-copy { color: var(--fg-dim); font-size: 12px; line-height: 1.55; margin: 9px 0 20px; }
+.proposal-list { display: flex; flex-direction: column; gap: 10px; }
+.proposal-card { border: 1px solid var(--line); border-radius: 7px; background: var(--bg); overflow: hidden; }
+.proposal-card.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.proposal-card-head { display: flex; justify-content: space-between; padding: 7px 9px; color: var(--fg-faint); font-size: 10px; }
+.proposal-card pre { margin: 0; padding: 9px; border-top: 1px solid var(--line); color: var(--code); font: 11px/1.55 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.typing-surface { display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; }
+.surface-head { display: flex; justify-content: space-between; padding: 17px 24px 10px; border-bottom: 1px solid var(--line); }
+.surface-step { color: var(--accent); font-variant-numeric: tabular-nums; }
+
 .source {
   flex: 1;
   overflow: auto;
-  padding: 16px 0 45vh;
+  padding: 24px 0 45vh;
   font-family: var(--mono);
   font-size: var(--fs);
   line-height: var(--line-h);
@@ -288,7 +343,8 @@ input:focus { border-color: var(--accent); }
   /* Near-virtualization for free: offscreen lines skip layout and paint. */
   content-visibility: auto;
   contain-intrinsic-size: auto var(--line-h);
-  padding: 0 24px 0 0;
+  padding: 4px 24px 4px 0;
+  border-bottom: 1px solid var(--line);
 }
 .ln.cur { background: var(--cur-line); box-shadow: inset 2px 0 0 var(--accent); }
 
@@ -447,4 +503,10 @@ input:focus { border-color: var(--accent); }
   .stat.big { grid-column: span 2; }
   .split { flex-direction: column; }
   .chunkpane { width: auto; border-top: 1px solid var(--line); }
+  .trace-layout { flex-direction: column; }
+  .proposal-pane { width: auto; max-height: 190px; border-right: 0; border-bottom: 1px solid var(--line); padding: 14px 16px; }
+  .proposal-copy { margin-bottom: 10px; }
+  .proposal-list { flex-direction: row; overflow-x: auto; }
+  .proposal-card { min-width: 210px; }
+  .surface-head { padding-left: 16px; padding-right: 16px; }
 }
